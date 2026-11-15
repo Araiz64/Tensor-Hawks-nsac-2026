@@ -18,17 +18,20 @@ ROCKET_SPECS = {
     "Tensor Rocket": {
         "dry_mass_kg": 2948400.0 - 118800.0,
         "specific_impulse_isp": 3200.0,
-        "base_cost_usd": 1200000000.0  # $1.2B Base Launch Cost
+        "base_cost_usd": 1200000000.0,  # $1.2B Base Launch Cost
+        "max_fuel_kg": 1200000.0        # Max tank capacity
     },
     "Space Launch System SLS": {
         "dry_mass_kg": 2603000.0 - 95000.0,
         "specific_impulse_isp": 3100.0,
-        "base_cost_usd": 2000000000.0  # $2.0B Base Launch Cost
+        "base_cost_usd": 2000000000.0,  # $2.0B Base Launch Cost
+        "max_fuel_kg": 1000000.0
     },
     "SpaceX Falcon 9": {
         "dry_mass_kg": 549054.0 - 22800.0,
         "specific_impulse_isp": 2950.0,
-        "base_cost_usd": 400000000.0   # $400M Base Launch Cost
+        "base_cost_usd": 400000000.0,   # $400M Base Launch Cost
+        "max_fuel_kg": 200000.0
     }
 }
 
@@ -60,14 +63,14 @@ def run_simulation(data: SimulationInput):
     # Validate Rocket Selection
     if data.selected_rocket not in ROCKET_SPECS:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Invalid rocket choice. Select from: {list(ROCKET_SPECS.keys())}"
         )
-    
+
     # Validate Destination Selection
     if data.target_destination not in DESTINATION_SPECS:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Invalid destination. Select from: {list(DESTINATION_SPECS.keys())}"
         )
 
@@ -75,9 +78,16 @@ def run_simulation(data: SimulationInput):
     destination = DESTINATION_SPECS[data.target_destination]
 
     g0 = 9.81
+
+    # Fuel limit: clamp to tank capacity so the response stays a normal 200 for Unity
+    fuel_kg = data.total_fuel_mass_kg
+    fuel_overfilled = fuel_kg > rocket["max_fuel_kg"]
+    if fuel_overfilled:
+        fuel_kg = rocket["max_fuel_kg"]
+
     # Final dry mass includes vehicle dry frame + payload mass
     final_mass_kg = rocket["dry_mass_kg"] + data.payload_mass_kg
-    total_wet_mass = final_mass_kg + data.total_fuel_mass_kg
+    total_wet_mass = final_mass_kg + fuel_kg
     specific_impulse_isp = rocket["specific_impulse_isp"]
 
     # Tsiolkovsky rocket equation calculation for Provided Delta-V
@@ -94,18 +104,21 @@ def run_simulation(data: SimulationInput):
         f"Calculated Provided Delta-V: {provided_dv:.1f} m/s."
     ]
 
-    # Verification checks (Delta-V and Budget)
-    if provided_dv >= required_dv and data.budget_limit_usd >= rocket["base_cost_usd"]:
+    # Verification checks (Delta-V, Budget, Fuel capacity)
+    reasons = []
+    if provided_dv < required_dv:
+        reasons.append("Insufficient Delta-V budget")
+    if data.budget_limit_usd < rocket["base_cost_usd"]:
+        reasons.append("Exceeded financial capital limits")
+    if fuel_overfilled:
+        reasons.append(f"Fuel load exceeded tank capacity ({rocket['max_fuel_kg']:.0f} kg)")
+
+    if reasons:
+        status = "FAILED"
+        mission_logs.append(f"Critical mission failure: {', '.join(reasons)}.")
+    else:
         status = "PASSING"
         mission_logs.append("Mission trajectory verified. All physical and budgetary parameters met successfully!")
-    else:
-        status = "FAILED"
-        reasons = []
-        if provided_dv < required_dv:
-            reasons.append("Insufficient Delta-V budget")
-        if data.budget_limit_usd < rocket["base_cost_usd"]:
-            reasons.append("Exceeded financial capital limits")
-        mission_logs.append(f"Critical mission failure: {', '.join(reasons)}.")
 
     return SimulationResponse(
         telemetry=TelemetryOutput(
