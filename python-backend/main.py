@@ -79,6 +79,9 @@ def run_simulation(data: SimulationInput):
 
     g0 = 9.81
 
+    # Unity sends the budget in MILLIONS of USD (slider text says "MILLION")
+    budget_usd = data.budget_limit_usd * 1000000.0
+
     # Fuel limit: clamp to tank capacity so the response stays a normal 200 for Unity
     fuel_kg = data.total_fuel_mass_kg
     fuel_overfilled = fuel_kg > rocket["max_fuel_kg"]
@@ -107,15 +110,16 @@ def run_simulation(data: SimulationInput):
     # Verification checks (Delta-V, Budget, Fuel capacity)
     reasons = []
     if provided_dv < required_dv:
-        reasons.append("Insufficient Delta-V budget")
-    if data.budget_limit_usd < rocket["base_cost_usd"]:
-        reasons.append("Exceeded financial capital limits")
+        short = required_dv - provided_dv
+        reasons.append(f"{data.selected_rocket} cannot reach {data.target_destination} (short by {short:.0f} m/s of Delta-V)")
+    if budget_usd < rocket["base_cost_usd"]:
+        reasons.append(f"Exceeded financial capital limits (budget ${budget_usd:,.0f}, {data.selected_rocket} needs ${rocket['base_cost_usd']:,.0f})")
     if fuel_overfilled:
         reasons.append(f"Fuel load exceeded tank capacity ({rocket['max_fuel_kg']:.0f} kg)")
 
     if reasons:
         status = "FAILED"
-        mission_logs.append(f"Critical mission failure: {', '.join(reasons)}.")
+        mission_logs.append(f"Critical mission failure: {'; '.join(reasons)}.")
     else:
         status = "PASSING"
         mission_logs.append("Mission trajectory verified. All physical and budgetary parameters met successfully!")
